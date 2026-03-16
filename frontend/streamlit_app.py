@@ -15,7 +15,7 @@ if not MY_API_KEY:
 
 st.set_page_config(page_title="Webpage Competition", layout="wide")
 st.title("Webpage Competition Dashboard")
-st.caption("Create, edit, and delete entries with avatar and webpage uploads")
+st.caption("Create, edit, and preview entries with avatar and HTML page")
 
 
 def api_url(path: str) -> str:
@@ -80,6 +80,7 @@ def create_entry_with_files(
             webpage_file.type or "application/octet-stream",
         ),
     }
+
     response = requests.post(
         api_url("/entries/upload"),
         headers=headers(),
@@ -106,6 +107,7 @@ def update_entry_with_optional_files(
         "author_first_name": author_first_name,
         "author_last_name": author_last_name,
     }
+
     files = {}
     if avatar_file is not None:
         files["avatar"] = (
@@ -132,7 +134,11 @@ def update_entry_with_optional_files(
 
 
 def delete_entry(entry_id: str) -> None:
-    response = requests.delete(api_url(f"/entries/{entry_id}"), headers=headers(), timeout=30)
+    response = requests.delete(
+        api_url(f"/entries/{entry_id}"),
+        headers=headers(),
+        timeout=30,
+    )
     response.raise_for_status()
 
 
@@ -140,12 +146,11 @@ with st.sidebar:
     st.header("Settings")
     st.write(f"API Base URL: `{API_BASE_URL}`")
     st.write("API key auth: enabled")
-    st.write("Preview mode: embedded iframe")
     if st.button("Refresh"):
         st.rerun()
 
 
-left_col, right_col = st.columns([1.0, 1.4])
+left_col, right_col = st.columns([1.0, 1.5])
 
 with left_col:
     st.subheader("Create entry")
@@ -160,15 +165,21 @@ with left_col:
             accept_multiple_files=False,
         )
         webpage_file = st.file_uploader(
-            "Upload webpage",
-            type=["zip", "html"],
+            "Upload HTML page",
+            type=["html"],
             accept_multiple_files=False,
         )
         submitted = st.form_submit_button("Create entry")
 
         if submitted:
-            if not title.strip() or not author_first_name.strip() or not author_last_name.strip() or avatar_file is None or webpage_file is None:
-                st.error("Title, author names, avatar, and webpage are required.")
+            if (
+                not title.strip()
+                or not author_first_name.strip()
+                or not author_last_name.strip()
+                or avatar_file is None
+                or webpage_file is None
+            ):
+                st.error("Title, author names, avatar, and HTML page are required.")
             else:
                 try:
                     created = create_entry_with_files(
@@ -185,8 +196,10 @@ with left_col:
                     detail = e.response.text if getattr(e, "response", None) is not None else str(e)
                     st.error(f"Failed to create entry: {detail}")
 
+
 with right_col:
     st.subheader("Entries")
+
     try:
         entries = get_entries()
     except requests.RequestException as e:
@@ -199,7 +212,8 @@ with right_col:
     else:
         for entry in entries:
             full_name = f"{entry['author_first_name']} {entry['author_last_name']}"
-            with st.expander(f"{entry['title']} — {full_name}"):
+
+            with st.expander(f"{entry['title']} — {full_name}", expanded=False):
                 st.write(f"**ID:** `{entry['id']}`")
                 st.write(f"**Description:** {entry.get('description') or '-'}")
                 st.write(f"**Created:** {entry['created_at']}")
@@ -207,6 +221,7 @@ with right_col:
 
                 avatar_url = None
                 spa_url = None
+
                 try:
                     if entry.get("avatar_file_path"):
                         avatar_url = get_avatar_url(entry["avatar_file_path"])
@@ -217,6 +232,7 @@ with right_col:
                     st.warning(f"Could not load file preview URLs: {detail}")
 
                 preview_col, meta_col = st.columns([1, 2])
+
                 with preview_col:
                     if avatar_url:
                         st.image(avatar_url, width=140, caption="Avatar")
@@ -227,11 +243,11 @@ with right_col:
                     st.write(f"**SPA path:** `{entry.get('spa_file_path') or '-'}`")
                     st.write(f"**Avatar path:** `{entry.get('avatar_file_path') or '-'}`")
                     if spa_url:
-                        st.markdown(f"[Open webpage in new tab]({spa_url})")
+                        st.markdown(f"[Open HTML in new tab]({spa_url})")
 
                 if spa_url:
-                    with st.expander("Embedded webpage preview", expanded=True):
-                        components.iframe(spa_url, height=700, scrolling=True)
+                    st.markdown("### HTML Preview")
+                    components.iframe(spa_url, height=700, scrolling=True)
                 else:
                     st.info("No webpage preview available.")
 
@@ -260,11 +276,12 @@ with right_col:
                         key=f"avatar_{entry['id']}",
                     )
                     edit_webpage = st.file_uploader(
-                        "Replace webpage",
-                        type=["zip", "html"],
+                        "Replace HTML page",
+                        type=["html"],
                         accept_multiple_files=False,
                         key=f"webpage_{entry['id']}",
                     )
+
                     save = st.form_submit_button("Save changes")
 
                     if save:
