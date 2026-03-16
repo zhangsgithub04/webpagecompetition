@@ -1,7 +1,7 @@
 import os
 from typing import Any, Dict, List, Optional
 from uuid import UUID
-
+from fastapi import File, Form, UploadFile, HTTPException, status
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -168,6 +168,56 @@ def delete_entry(entry_id: UUID):
 
     return None
 
+
+@app.post(
+    "/entries/upload",
+    response_model=EntryResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(verify_api_key)],
+)
+def create_entry_upload(
+    title: str = Form(...),
+    description: str = Form(""),
+    author_first_name: str = Form(...),
+    author_last_name: str = Form(...),
+    avatar: UploadFile = File(...),
+    webpage: UploadFile = File(...),
+):
+    def upload_to_bucket(bucket_name: str, uploaded_file: UploadFile, folder: str) -> str:
+        ext = ""
+        if uploaded_file.filename and "." in uploaded_file.filename:
+            ext = "." + uploaded_file.filename.split(".")[-1].lower()
+
+        file_path = f"{folder}/{uuid.uuid4()}{ext}"
+        file_bytes = uploaded_file.file.read()
+
+        supabase.storage.from_(bucket_name).upload(
+            path=file_path,
+            file=file_bytes,
+            file_options={
+                "content-type": uploaded_file.content_type or "application/octet-stream"
+            },
+        )
+        return file_path
+
+    avatar_path = upload_to_bucket("competition-avatars", avatar, "avatars")
+    webpage_path = upload_to_bucket("competition-spa", webpage, "webpages")
+
+    payload = {
+        "title": title,
+        "description": description or None,
+        "spa_file_path": webpage_path,
+        "avatar_file_path": avatar_path,
+        "author_first_name": author_first_name,
+        "author_last_name": author_last_name,
+    }
+
+    result = supabase.table("webpage_competition_entries").insert(payload).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=400, detail="Failed to create entry")
+
+    return result.data[0]
 
 # Install:
 # pip install fastapi uvicorn supabase
