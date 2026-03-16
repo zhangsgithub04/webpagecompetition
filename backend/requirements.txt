@@ -1,4 +1,5 @@
 fastapi 
-uvicorn 
+uvicorn
+supabase
 sqlalchemy 
 psycopg2-binary
