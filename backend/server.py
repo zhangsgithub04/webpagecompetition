@@ -19,16 +19,19 @@ AVATAR_BUCKET = "competition-avatars"
 
 if not SUPABASE_URL:
     raise RuntimeError("Missing SUPABASE_URL")
+
 if not SUPABASE_KEY:
     raise RuntimeError("Missing SUPABASE_KEY")
+
 if not MY_API_KEY:
     raise RuntimeError("Missing MY_API_KEY")
+
 if not SUPABASE_URL.startswith("https://") or "supabase.co" not in SUPABASE_URL:
     raise RuntimeError(f"Invalid SUPABASE_URL: {SUPABASE_URL}")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-app = FastAPI(title="Webpage Competition API")
+app = FastAPI(title="Webpage Competition API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -66,21 +69,27 @@ def ensure_single(result: Any, message: str = "Entry not found") -> Dict[str, An
 
 
 def upload_to_bucket(bucket_name: str, uploaded_file: UploadFile, folder: str) -> str:
-    ext = ""
-    if uploaded_file.filename and "." in uploaded_file.filename:
-        ext = "." + uploaded_file.filename.split(".")[-1].lower()
+    try:
+        ext = ""
+        if uploaded_file.filename and "." in uploaded_file.filename:
+            ext = "." + uploaded_file.filename.split(".")[-1].lower()
 
-    file_path = f"{folder}/{uuid.uuid4()}{ext}"
-    file_bytes = uploaded_file.file.read()
+        file_path = f"{folder}/{uuid.uuid4()}{ext}"
+        file_bytes = uploaded_file.file.read()
 
-    supabase.storage.from_(bucket_name).upload(
-        path=file_path,
-        file=file_bytes,
-        file_options={
-            "content-type": uploaded_file.content_type or "application/octet-stream"
-        },
-    )
-    return file_path
+        supabase.storage.from_(bucket_name).upload(
+            path=file_path,
+            file=file_bytes,
+            file_options={
+                "content-type": uploaded_file.content_type or "application/octet-stream"
+            },
+        )
+        return file_path
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Upload to bucket '{bucket_name}' failed: {str(e)}",
+        )
 
 
 @app.get("/health")
@@ -90,25 +99,33 @@ def health() -> Dict[str, str]:
 
 @app.get("/entries", response_model=List[EntryResponse], dependencies=[Depends(verify_api_key)])
 def list_entries() -> List[Dict[str, Any]]:
-    result = (
-        supabase.table(TABLE_NAME)
-        .select("*")
-        .order("created_at", desc=True)
-        .execute()
-    )
-    return result.data or []
+    try:
+        result = (
+            supabase.table(TABLE_NAME)
+            .select("*")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"List entries failed: {str(e)}")
 
 
 @app.get("/entries/{entry_id}", response_model=EntryResponse, dependencies=[Depends(verify_api_key)])
 def get_entry(entry_id: str) -> Dict[str, Any]:
-    result = (
-        supabase.table(TABLE_NAME)
-        .select("*")
-        .eq("id", entry_id)
-        .limit(1)
-        .execute()
-    )
-    return ensure_single(result)
+    try:
+        result = (
+            supabase.table(TABLE_NAME)
+            .select("*")
+            .eq("id", entry_id)
+            .limit(1)
+            .execute()
+        )
+        return ensure_single(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Get entry failed: {str(e)}")
 
 
 @app.post(
@@ -125,20 +142,25 @@ def create_entry_upload(
     avatar: UploadFile = File(...),
     webpage: UploadFile = File(...),
 ) -> Dict[str, Any]:
-    avatar_path = upload_to_bucket(AVATAR_BUCKET, avatar, "avatars")
-    webpage_path = upload_to_bucket(SPA_BUCKET, webpage, "webpages")
+    try:
+        avatar_path = upload_to_bucket(AVATAR_BUCKET, avatar, "avatars")
+        webpage_path = upload_to_bucket(SPA_BUCKET, webpage, "webpages")
 
-    payload = {
-        "title": title,
-        "description": description or None,
-        "spa_file_path": webpage_path,
-        "avatar_file_path": avatar_path,
-        "author_first_name": author_first_name,
-        "author_last_name": author_last_name,
-    }
+        payload = {
+            "title": title.strip(),
+            "description": description.strip() or None,
+            "spa_file_path": webpage_path,
+            "avatar_file_path": avatar_path,
+            "author_first_name": author_first_name.strip(),
+            "author_last_name": author_last_name.strip(),
+        }
 
-    result = supabase.table(TABLE_NAME).insert(payload).execute()
-    return ensure_single(result, "Failed to create entry")
+        result = supabase.table(TABLE_NAME).insert(payload).execute()
+        return ensure_single(result, "Failed to create entry")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Create entry failed: {str(e)}")
 
 
 @app.patch(
@@ -155,45 +177,59 @@ def update_entry_upload(
     avatar: UploadFile | None = File(None),
     webpage: UploadFile | None = File(None),
 ) -> Dict[str, Any]:
-    existing = (
-        supabase.table(TABLE_NAME)
-        .select("*")
-        .eq("id", entry_id)
-        .limit(1)
-        .execute()
-    )
-    _ = ensure_single(existing)
+    try:
+        existing = (
+            supabase.table(TABLE_NAME)
+            .select("*")
+            .eq("id", entry_id)
+            .limit(1)
+            .execute()
+        )
+        _ = ensure_single(existing)
 
-    update_data = {
-        "title": title,
-        "description": description or None,
-        "author_first_name": author_first_name,
-        "author_last_name": author_last_name,
-    }
+        update_data = {
+            "title": title.strip(),
+            "description": description.strip() or None,
+            "author_first_name": author_first_name.strip(),
+            "author_last_name": author_last_name.strip(),
+        }
 
-    if avatar is not None:
-        update_data["avatar_file_path"] = upload_to_bucket(AVATAR_BUCKET, avatar, "avatars")
+        if avatar is not None:
+            update_data["avatar_file_path"] = upload_to_bucket(AVATAR_BUCKET, avatar, "avatars")
 
-    if webpage is not None:
-        update_data["spa_file_path"] = upload_to_bucket(SPA_BUCKET, webpage, "webpages")
+        if webpage is not None:
+            update_data["spa_file_path"] = upload_to_bucket(SPA_BUCKET, webpage, "webpages")
 
-    result = (
-        supabase.table(TABLE_NAME)
-        .update(update_data)
-        .eq("id", entry_id)
-        .execute()
-    )
-    return ensure_single(result, "Failed to update entry")
+        result = (
+            supabase.table(TABLE_NAME)
+            .update(update_data)
+            .eq("id", entry_id)
+            .execute()
+        )
+        return ensure_single(result, "Failed to update entry")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Update entry failed: {str(e)}")
 
 
-@app.delete("/entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(verify_api_key)])
+@app.delete(
+    "/entries/{entry_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(verify_api_key)],
+)
 def delete_entry(entry_id: str):
-    result = (
-        supabase.table(TABLE_NAME)
-        .delete()
-        .eq("id", entry_id)
-        .execute()
-    )
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Entry not found")
-    return None
+    try:
+        result = (
+            supabase.table(TABLE_NAME)
+            .delete()
+            .eq("id", entry_id)
+            .execute()
+        )
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Entry not found")
+        return None
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Delete entry failed: {str(e)}")
