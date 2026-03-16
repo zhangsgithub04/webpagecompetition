@@ -14,19 +14,19 @@ if not MY_API_KEY:
 
 st.set_page_config(page_title="Webpage Competition", layout="wide")
 st.title("Webpage Competition Dashboard")
-st.caption("Manage competition entries and upload avatar/webpage files")
+st.caption("Create, edit, and delete entries with avatar and webpage uploads")
 
 
 def api_url(path: str) -> str:
     return f"{API_BASE_URL.rstrip('/')}{path}"
 
 
-def get_headers() -> Dict[str, str]:
+def headers() -> Dict[str, str]:
     return {"X-API-Key": MY_API_KEY}
 
 
 def get_entries() -> List[Dict[str, Any]]:
-    response = requests.get(api_url("/entries"), headers=get_headers(), timeout=30)
+    response = requests.get(api_url("/entries"), headers=headers(), timeout=30)
     response.raise_for_status()
     return response.json()
 
@@ -45,7 +45,6 @@ def create_entry_with_files(
         "author_first_name": author_first_name,
         "author_last_name": author_last_name,
     }
-
     files = {
         "avatar": (
             avatar_file.name,
@@ -58,10 +57,9 @@ def create_entry_with_files(
             webpage_file.type or "application/octet-stream",
         ),
     }
-
     response = requests.post(
         api_url("/entries/upload"),
-        headers=get_headers(),
+        headers=headers(),
         data=data,
         files=files,
         timeout=60,
@@ -85,7 +83,6 @@ def update_entry_with_optional_files(
         "author_first_name": author_first_name,
         "author_last_name": author_last_name,
     }
-
     files = {}
     if avatar_file is not None:
         files["avatar"] = (
@@ -102,7 +99,7 @@ def update_entry_with_optional_files(
 
     response = requests.patch(
         api_url(f"/entries/{entry_id}/upload"),
-        headers=get_headers(),
+        headers=headers(),
         data=data,
         files=files if files else None,
         timeout=60,
@@ -112,7 +109,7 @@ def update_entry_with_optional_files(
 
 
 def delete_entry(entry_id: str) -> None:
-    response = requests.delete(api_url(f"/entries/{entry_id}"), headers=get_headers(), timeout=30)
+    response = requests.delete(api_url(f"/entries/{entry_id}"), headers=headers(), timeout=30)
     response.raise_for_status()
 
 
@@ -120,22 +117,15 @@ with st.sidebar:
     st.header("Settings")
     st.write(f"API Base URL: `{API_BASE_URL}`")
     st.write("API key auth: enabled")
-    st.markdown(
-        "**Expected backend endpoints**\n"
-        "- `POST /entries/upload`\n"
-        "- `PATCH /entries/{entry_id}/upload`\n"
-        "- `GET /entries`\n"
-        "- `DELETE /entries/{entry_id}`"
-    )
-    if st.button("Refresh entries"):
+    if st.button("Refresh"):
         st.rerun()
 
 
-left_col, right_col = st.columns([1.05, 1.45])
+left_col, right_col = st.columns([1.0, 1.4])
 
 with left_col:
     st.subheader("Create entry")
-    with st.form("create_entry_form", clear_on_submit=True):
+    with st.form("create_form", clear_on_submit=True):
         title = st.text_input("Title")
         description = st.text_area("Description")
         author_first_name = st.text_input("Author first name")
@@ -149,20 +139,12 @@ with left_col:
             "Upload webpage",
             type=["zip", "html"],
             accept_multiple_files=False,
-            help="Upload a ZIP of the webpage or a single HTML file.",
         )
-        submitted = st.form_submit_button("Create")
+        submitted = st.form_submit_button("Create entry")
 
         if submitted:
-            missing_fields = [
-                not title.strip(),
-                not author_first_name.strip(),
-                not author_last_name.strip(),
-                avatar_file is None,
-                webpage_file is None,
-            ]
-            if any(missing_fields):
-                st.error("Title, author names, avatar upload, and webpage upload are required.")
+            if not title.strip() or not author_first_name.strip() or not author_last_name.strip() or avatar_file is None or webpage_file is None:
+                st.error("Title, author names, avatar, and webpage are required.")
             else:
                 try:
                     created = create_entry_with_files(
@@ -173,10 +155,10 @@ with left_col:
                         avatar_file=avatar_file,
                         webpage_file=webpage_file,
                     )
-                    st.success(f"Created entry: {created['title']}")
+                    st.success(f"Created: {created['title']}")
                     st.rerun()
                 except requests.RequestException as e:
-                    detail = getattr(e.response, "text", str(e)) if hasattr(e, "response") else str(e)
+                    detail = e.response.text if getattr(e, 'response', None) is not None else str(e)
                     st.error(f"Failed to create entry: {detail}")
 
 with right_col:
@@ -184,7 +166,8 @@ with right_col:
     try:
         entries = get_entries()
     except requests.RequestException as e:
-        st.error(f"Could not connect to API: {e}")
+        detail = e.response.text if getattr(e, 'response', None) is not None else str(e)
+        st.error(f"Could not connect to API: {detail}")
         entries = []
 
     if not entries:
@@ -195,47 +178,34 @@ with right_col:
             with st.expander(f"{entry['title']} — {full_name}"):
                 st.write(f"**ID:** `{entry['id']}`")
                 st.write(f"**Description:** {entry.get('description') or '-'}")
-                st.write(f"**SPA file path:** `{entry.get('spa_file_path') or '-'}`")
-                st.write(f"**Avatar file path:** `{entry.get('avatar_file_path') or '-'}`")
+                st.write(f"**SPA path:** `{entry.get('spa_file_path') or '-'}`")
+                st.write(f"**Avatar path:** `{entry.get('avatar_file_path') or '-'}`")
                 st.write(f"**Created:** {entry['created_at']}")
                 st.write(f"**Updated:** {entry['updated_at']}")
 
-                st.markdown("### Replace details or files")
                 with st.form(f"edit_form_{entry['id']}"):
-                    edit_title = st.text_input("Title", value=entry["title"], key=f"title_{entry['id']}")
-                    edit_description = st.text_area(
-                        "Description",
-                        value=entry.get("description") or "",
-                        key=f"description_{entry['id']}",
-                    )
-                    edit_first = st.text_input(
-                        "Author first name",
-                        value=entry["author_first_name"],
-                        key=f"first_{entry['id']}",
-                    )
-                    edit_last = st.text_input(
-                        "Author last name",
-                        value=entry["author_last_name"],
-                        key=f"last_{entry['id']}",
-                    )
+                    edit_title = st.text_input("Title", value=entry['title'], key=f"title_{entry['id']}")
+                    edit_description = st.text_area("Description", value=entry.get('description') or '', key=f"desc_{entry['id']}")
+                    edit_first = st.text_input("Author first name", value=entry['author_first_name'], key=f"first_{entry['id']}")
+                    edit_last = st.text_input("Author last name", value=entry['author_last_name'], key=f"last_{entry['id']}")
                     edit_avatar = st.file_uploader(
-                        "Replace avatar (optional)",
+                        "Replace avatar",
                         type=["png", "jpg", "jpeg", "webp"],
                         accept_multiple_files=False,
                         key=f"avatar_{entry['id']}",
                     )
                     edit_webpage = st.file_uploader(
-                        "Replace webpage (optional)",
+                        "Replace webpage",
                         type=["zip", "html"],
                         accept_multiple_files=False,
                         key=f"webpage_{entry['id']}",
                     )
-
                     save = st.form_submit_button("Save changes")
+
                     if save:
                         try:
                             update_entry_with_optional_files(
-                                entry_id=entry["id"],
+                                entry_id=entry['id'],
                                 title=edit_title.strip(),
                                 description=edit_description.strip(),
                                 author_first_name=edit_first.strip(),
@@ -246,27 +216,14 @@ with right_col:
                             st.success("Entry updated.")
                             st.rerun()
                         except requests.RequestException as e:
-                            detail = getattr(e.response, "text", str(e)) if hasattr(e, "response") else str(e)
+                            detail = e.response.text if getattr(e, 'response', None) is not None else str(e)
                             st.error(f"Failed to update entry: {detail}")
 
                 if st.button("Delete entry", key=f"delete_{entry['id']}"):
                     try:
-                        delete_entry(entry["id"])
+                        delete_entry(entry['id'])
                         st.success("Entry deleted.")
                         st.rerun()
                     except requests.RequestException as e:
-                        detail = getattr(e.response, "text", str(e)) if hasattr(e, "response") else str(e)
+                        detail = e.response.text if getattr(e, 'response', None) is not None else str(e)
                         st.error(f"Failed to delete entry: {detail}")
-
-
-st.markdown("---")
-st.markdown("### requirements.txt")
-st.code("streamlit\nrequests", language="text")
-
-st.markdown("### Run locally")
-st.code(
-    """export API_BASE_URL=http://localhost:8000
-export MY_API_KEY=your-private-api-key
-streamlit run webpage_competition_streamlit_upload.py""",
-    language="bash",
-)
