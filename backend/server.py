@@ -96,6 +96,28 @@ def upload_to_bucket(bucket_name: str, uploaded_file: UploadFile, folder: str) -
 def health() -> Dict[str, str]:
     return {"status": "ok"}
 
+@app.get("/files/avatar-url", dependencies=[Depends(verify_api_key)])
+def get_avatar_url(path: str = Query(...)) -> Dict[str, str]:
+    try:
+        result = supabase.storage.from_(AVATAR_BUCKET).create_signed_url(path, 3600)
+        signed_url = result.get("signedURL") or result.get("signed_url")
+        if not signed_url:
+            raise HTTPException(status_code=400, detail="Could not create avatar URL")
+        return {"url": signed_url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Avatar URL failed: {str(e)}")
+
+
+@app.get("/files/spa-url", dependencies=[Depends(verify_api_key)])
+def get_spa_url(path: str = Query(...)) -> Dict[str, str]:
+    try:
+        result = supabase.storage.from_(SPA_BUCKET).create_signed_url(path, 3600)
+        signed_url = result.get("signedURL") or result.get("signed_url")
+        if not signed_url:
+            raise HTTPException(status_code=400, detail="Could not create SPA URL")
+        return {"url": signed_url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SPA URL failed: {str(e)}")
 
 @app.get("/entries", response_model=List[EntryResponse], dependencies=[Depends(verify_api_key)])
 def list_entries() -> List[Dict[str, Any]]:
